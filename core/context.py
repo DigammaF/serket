@@ -6,6 +6,7 @@ import json
 
 from dataclasses import dataclass, field
 from os import listdir
+from pathlib import Path
 from typing import Any, Callable
 from re import compile, match
 from urllib.parse import urlparse
@@ -16,9 +17,11 @@ from rich.console import Console, RenderableType
 from rich.pretty import Pretty
 from rich.panel import Panel
 from rich.columns import Columns
+from rich.progress import Progress
 
+from .settings import CHUNK_SIZE
 from .renderer import render
-from .structure import PROFILES, Profile, Tab
+from .structure import DOWNLOADS, PROFILES, Profile, Tab
 
 logger = logging.getLogger("serket.context")
 
@@ -87,7 +90,7 @@ class Context:
 			context._tab = tab
 			context.display_tab(tab)
 
-	class RawHandler(ContentHandler):
+	class JSONHandler(ContentHandler):
 		def _check(self, content_type: str) -> bool:
 			return "application/json" in content_type
 		
@@ -100,9 +103,34 @@ class Context:
 
 			context._console.print(text)
 
+	class ImageHandler(ContentHandler):
+		def _check(self, content_type: str) -> bool:
+			return "image" in content_type
+		
+		def run(self, profile: Profile, tab: Tab, result: Response, context: Context):
+			content_length = int(result.headers.get("content-length", 0))
+			parsed_url = urlparse(result.url)
+			path = Path(parsed_url.path)
+			filename = path.stem + path.suffix
+
+			if (user_filename := context._console.input(f"({filename}) overwrite filename: ")):
+				filename = user_filename
+
+			filepath = DOWNLOADS/filename
+
+			with Progress() as progress:
+				task = progress.add_task("Downloading", total=content_length)
+
+				with open(filepath, "wb") as file:
+					for chunk in result.iter_content(chunk_size=CHUNK_SIZE):
+						file.write(chunk)
+						progress.update(task, advance=len(chunk))
+
+			context.success(f"Downloaded to {filepath}")
+
 	def __post_init__(self):
 		self._content_handlers.extend((
-			Context.HTMLHandler(), Context.RawHandler()
+			Context.HTMLHandler(), Context.JSONHandler(), Context.ImageHandler()
 		))
 
 	@property
@@ -184,13 +212,14 @@ class Context:
 			profile = self.get_profile(profile_name)
 
 		profile.session.headers["User-Agent"] = profile.get_setting("user-agent")
-		result = profile.session.get(url)
+		result = profile.session.get(url, stream=True)
 
 		logger.info("request headers " + json.dumps(dict(profile.session.headers), indent=4))
 		logger.info("response headers " + json.dumps(dict(result.headers), indent=4))
 		
-		content_type = result.headers['content-type']
-		self.info(f"{result.status_code} {content_type}")
+		content_type = result.headers.get("content-type", "no content type sent")
+		content_length = int(result.headers.get("content-length", 0))
+		self.info(f"status: {result.status_code} | type: {content_type} | size: {content_length}")
 
 		if result.status_code == 200:
 			tab = Tab(tab_name)
