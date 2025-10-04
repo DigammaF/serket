@@ -235,6 +235,10 @@ class Context:
 		try:
 			result = profile.session.get(url, stream=True)
 
+		except requests.exceptions.SSLError:
+			self.error("unable to verify the server's SSL certificate")
+			return
+
 		except requests.exceptions.ConnectionError as error:
 			self.error(f"connection error: {error}")
 			logger.exception("connection error")
