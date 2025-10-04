@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import json
+import requests
 
 from dataclasses import dataclass, field
 from os import listdir
@@ -101,6 +102,19 @@ class Context:
 				context.error(f"could not decode content: encoding={result.encoding} apparent_encoding={result.apparent_encoding}")
 				return
 
+			context._console.print(Pretty(json.loads(text)))
+
+	class TextHandler(ContentHandler):
+		def _check(self, content_type: str) -> bool:
+			return "text/plain" in content_type
+		
+		def run(self, profile: Profile, tab: Tab, result: Response, context: Context):
+			text = decode_text(result)
+
+			if text is None:
+				context.error(f"could not decode content: encoding={result.encoding} apparent_encoding={result.apparent_encoding}")
+				return
+			
 			context._console.print(text)
 
 	class ImageHandler(ContentHandler):
@@ -217,7 +231,14 @@ class Context:
 			profile = self.get_profile(profile_name)
 
 		profile.session.headers["User-Agent"] = profile.get_setting("user-agent")
-		result = profile.session.get(url, stream=True)
+
+		try:
+			result = profile.session.get(url, stream=True)
+
+		except requests.exceptions.ConnectionError as error:
+			self.error(f"connection error: {error}")
+			logger.exception("connection error")
+			return
 
 		logger.info("request headers " + json.dumps(dict(profile.session.headers), indent=4))
 		logger.info("response headers " + json.dumps(dict(result.headers), indent=4))
@@ -231,7 +252,13 @@ class Context:
 
 			for handler in self._content_handlers:
 				if handler.check(content_type):
-					handler.run(profile, tab, result, self)
+					try:
+						handler.run(profile, tab, result, self)
+
+					except Exception as error:
+						self.error(f"error while handling response: {error}")
+						logger.exception("error while handling response")
+
 					break
 
 	def print_tabs(self):
