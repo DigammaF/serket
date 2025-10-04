@@ -12,6 +12,8 @@ from typing import Iterable
 from requests.sessions import RequestsCookieJar, Session
 from bs4 import BeautifulSoup
 
+from .result import Result, Ok, Error
+
 logger = logging.getLogger("serket.structure")
 
 BASE = Path(__file__).parent.resolve().parent
@@ -26,8 +28,9 @@ def require(folder: Path) -> Path:
 COOKIES = require(BASE/"cookies")
 DOWNLOADS = require(BASE/"downloads")
 PROFILES = require(BASE/"profiles")
+PROXIES = require(BASE/"proxies")
 
-logger.info(f"\n{BASE=}\n{COOKIES=}\n{DOWNLOADS=}\n{PROFILES=}")
+logger.info(f"\n{BASE=}\n{COOKIES=}\n{DOWNLOADS=}\n{PROFILES=}\n{PROXIES=}")
 
 DEFAULT_SETTINGS: dict[str, str] = {
 	"user-agent": "Mozilla/5.0 (X11; Ubuntu; NoPointer) Gecko/20100101 Serket/0.1"
@@ -39,6 +42,7 @@ class Profile:
 	_session: Session = field(default_factory=Session)
 	_tabs: dict[int, Tab] = field(init=False, default_factory=dict)
 	_settings: dict[str, str] = field(default_factory=dict)
+	_proxies: dict[str, str] = field(default_factory=dict)
 
 	def __post_init__(self):
 		if not self._name: raise RuntimeError(f"tried to create a profile with no name")
@@ -71,15 +75,56 @@ class Profile:
 	def profile_file(self) -> Path:
 		return PROFILES/f"{self._name}.profile"
 	
-	def get_setting(self, name: str) -> str:
-		return self._settings[name]
+	@property
+	def proxies_file(self) -> Path:
+		return PROXIES/f"{self._name}.proxies"
 	
-	def set_setting(self, name: str, value: str):
+	@property
+	def is_stored_on_disk(self) -> bool:
+		result = self.profile_file.exists()
+		logger.info(f"checking if profile '{self._name}' exists by checking existence of {self.profile_file}: {result}")
+		return result
+	
+	def get_setting(self, name: str) -> Result[str, str]:
+		if name in self._settings: return Ok(self._settings[name])
+		return Error(f"no such setting '{name}'")
+	
+	def set_setting(self, name: str, value: str) -> Result[str, str]:
 		logger.info(f"profile '{self._name}': setting '{name}' set to '{value}'")
+		if name in self._settings: message = f"changed '{name}' to '{value}'"
+		else: message = f"created '{name}' with '{value}'"
 		self._settings[name] = value
+		return Ok(message)
 
 	def iter_settings(self) -> Iterable[tuple[str, str]]:
 		return iter(self._settings.items())
+	
+	def reset_setting(self, name: str) -> Result[str, str]:
+		if name in DEFAULT_SETTINGS:
+			self._settings[name] = DEFAULT_SETTINGS[name]
+			return Ok(f"reset setting to {DEFAULT_SETTINGS[name]}")
+		
+		return Error(f"no default available for '{name}'")
+	
+	def get_proxy(self, scheme: str) -> Result[str, str]:
+		if scheme in self._proxies: return Ok(self._proxies[scheme])
+		return Error(f"no proxy defined for '{scheme}'")
+	
+	def set_proxy(self, scheme: str, value: str) -> Result[str, str]:
+		if scheme in self._proxies: message = f"set proxy for '{scheme}' to '{value}'"
+		else: message = f"created proxy for '{scheme}' to '{value}'"
+		self._proxies[scheme] = value
+		return Ok(message)
+
+	def iter_proxies(self) -> Iterable[tuple[str, str]]:
+		return iter(self._proxies.items())
+	
+	def clear_proxy(self, scheme: str) -> Result[str, str]:
+		if scheme in self._proxies:
+			del self._proxies[scheme]
+			return Ok(f"cleared '{scheme}'")
+		
+		return Ok(f"'{scheme}' did not exist anyway")
 
 	def clear_cookies(self):
 		logger.info(f"profile '{self._name}': clearing cookies")
@@ -138,13 +183,38 @@ class Profile:
 		with open(self.profile_file, "w", encoding="utf-8") as file:
 			json.dump(self._settings, file, indent=4)
 
+	def _load_proxies(self):
+		logger.info(f"profile '{self._name}': loading proxies")
+		logger.info(f"checking {self.proxies_file}")
+
+		if self.proxies_file.exists():
+			logger.info(f"file exists")
+
+			with open(self.proxies_file, "r", encoding="utf-8") as file:
+				loaded = json.load(file)
+				logger.info(f"loading those proxies " + json.dumps(loaded, indent=4))
+				self._proxies.update(loaded)
+				return
+			
+		else:
+			logger.info(f"file not found, not loading any proxy")
+			return
+		
+	def _save_proxies(self):
+		logger.info(f"profile '{self._name}': saving proxies to {self.proxies_file}")
+
+		with open(self.proxies_file, "w", encoding="utf-8") as file:
+			json.dump(self._proxies, file, indent=4)
+
 	def load_from_disk(self):
 		self._load_cookies()
 		self._load_profile_settings()
+		self._load_proxies()
 
 	def save_to_disk(self):
 		self._save_cookies()
 		self._save_profile_settings()
+		self._save_proxies()
 
 	def delete_from_disk(self):
 		logger.info(f"profile '{self._name}': deleting profile from disk")

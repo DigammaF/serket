@@ -19,23 +19,34 @@ from rich.pretty import Pretty
 from rich.panel import Panel
 from rich.columns import Columns
 from rich.progress import Progress
+from rich.table import Table
 
 from .settings import CHUNK_SIZE
 from .renderer import render
 from .structure import DOWNLOADS, PROFILES, Profile, Tab
+from .result import Result, Ok, Error
 
 logger = logging.getLogger("serket.context")
 
 HELP_COMMAND = compile(r"^help")
+
 GET_COMMAND = compile(r"^get (?P<url>\S*)(?: as (?P<profile_name>\w*))?(?: to (?P<tab_name>\w*))?")
+
 TABS_COMMAND = compile(r"^tabs")
 TAB_COMMAND = compile(r"^tab (?P<selection>\S*)")
+
 PROFILES_COMMAND = compile(r"^profiles")
 PROFILE_COMMAND = compile(r"^profile (?P<name>\w*)")
-SETTING_COMMAND = compile(r"^setting (?P<name>\S*) (?P<value>\S*)")
-CLEAR_COOKIES_COMMAND = compile(r"^clear cookies")
 FORK_PROFILE_COMMAND = compile(r"^fork profile (?P<name>\w*)")
 DELETE_PROFILE_COMMAND = compile(r"^delete profile")
+
+SETTING_COMMAND = compile(r"^setting (?P<name>\S*) (?P<value>\S*)")
+RESET_SETTING_COMMAND = compile(r"^setting reset (?P<name>\S*)")
+
+CLEAR_COOKIES_COMMAND = compile(r"^clear cookies")
+
+PROXY_COMMAND = compile(r"^proxy (?P<scheme>\S*) (?P<value>\S*)")
+CLEAR_PROXY_COMMAND = compile(r"^proxy clear (?P<scheme>\S*)")
 
 def decode_text(result: Response) -> str|None:
 	encoding = result.encoding
@@ -160,7 +171,7 @@ class Context:
 
 	def info(self, text: str):
 		logger.info(text)
-		self._console.print(f"( ) {text}")
+		self._console.print(f"[yellow](~)[/yellow] {text}")
 
 	def success(self, text: str):
 		logger.info(f"success: {text}")
@@ -230,7 +241,14 @@ class Context:
 		else:
 			profile = self.get_profile(profile_name)
 
-		profile.session.headers["User-Agent"] = profile.get_setting("user-agent")
+		user_agent = profile.get_setting("user-agent")
+
+		if isinstance(user_agent, Error):
+			self.error(f"error while retrieving user-agent: {user_agent.error}")
+			return
+
+		assert isinstance(user_agent, Ok)
+		profile.session.headers["User-Agent"] = user_agent.value
 
 		try:
 			result = profile.session.get(url, stream=True)
@@ -331,8 +349,9 @@ class Context:
 		for profile_name, profile in self._profiles.items():
 			settings = "\n".join(f"{name}: {value}" for name, value in profile.iter_settings())
 			cookies = f"{len(profile.cookies)} cookies"
+			proxies = "\n".join(f"{scheme}: {value}" for scheme, value in profile.iter_proxies())
 			profile_renderables.append(Panel.fit(
-				f"{cookies}\n - settings - \n{settings}",
+				f"{cookies}\n - settings - \n{settings}\n - proxies - \n{proxies}",
 				title=profile_name,
 				style="red" if profile is self._profile else ""
 			))
@@ -343,13 +362,18 @@ class Context:
 		if self._profile is not None: self._profile.save_to_disk()
 		self._profile = self.get_profile(name)
 
+		if not self._profile.is_stored_on_disk:
+			self.success(f"created profile '{name}'")
+
 	def set_setting(self, name: str, value: str):
 		if self._profile is None:
 			self.error(f"No profile currently loaded")
 			return
 		
-		self._profile.set_setting(name, value)
-		self.success("done")
+		result = self._profile.set_setting(name, value)
+		
+		if isinstance(result, Ok): self.success(result.value)
+		if isinstance(result, Error): self.error(result.error)
 
 	def clear_cookies(self):
 		if self._profile is None:
@@ -361,6 +385,7 @@ class Context:
 
 	def fork_profile(self, name: str):
 		self.error("not implemented")
+		# TODO
 
 	def delete_profile(self):
 		if self._profile is None:
@@ -371,17 +396,64 @@ class Context:
 		del self._profiles[self._profile.name]
 		self._profile = None
 
+	def proxy(self, scheme: str, value: str):
+		if self._profile is None:
+			self.error(f"No profile currently loaded")
+			return
+		
+		result = self._profile.set_proxy(scheme, value)
+		
+		if isinstance(result, Ok): self.success(result.value)
+		if isinstance(result, Error): self.error(result.error)
+
+	def clear_proxy(self, scheme: str):
+		if self._profile is None:
+			self.error(f"No profile currently loaded")
+			return
+		
+		result = self._profile.clear_proxy(scheme)
+		
+		if isinstance(result, Ok): self.success(result.value)
+		if isinstance(result, Error): self.error(result.error)
+
 	def print_help(self):
-		self._console.print("[blue]help[/blue]: prints this help")
-		self._console.print("[blue]get <url> (as <profile>)? (to <tab>)?[/blue]: visit <url>, using <profile> or the current one, sending the result to a new tab named <tab> or a new tab with an automatically picked name")
-		self._console.print("[blue]tabs[/blue]: displays a list of active tabs and the profile used to open each one")
-		self._console.print("[blue]tab <selection>[/blue]: switch to a tab by numerical key or by looking for a tab with a name or title starting with <selection>. Please note that you can only switch to tabs owned by your current profile")
-		self._console.print("[blue]profiles[/blue]: prints a list of existing profiles")
-		self._console.print("[blue]profile <name>[/blue]: switch to a profile, or create a new profile with that name if it doesn't exist")
-		self._console.print("[blue]setting <name> <value>[/blue]: change a setting for the current profile")
-		self._console.print("[blue]clear cookies[/blue]: clear all cookies from the current profile")
-		self._console.print("[blue]fork profile <name>[/blue]: create a new profile named <name> by copying the settings and cookies of the current profile")
-		self._console.print("[blue]delete profile[/blue]: delete the current profile from disk and memory")
+		def display(title: str, coms: tuple[tuple[str, str], ...]):
+			table = Table(title=title)
+
+			table.add_column("Command")
+			table.add_column("Description")
+
+			for com in coms:
+				table.add_row(*com)
+
+			self._console.print(table)
+
+		display("Misc", (
+			("help", "print this help"),
+			("setting <name> <value>", "change a setting for the current profile"),
+			("clear cookies", "clear all cookies from the current profile"),
+		))
+
+		display("Browsing", (
+			("get <url> (as <profile>)? (to <tab>)?", "visit <url>, using <profile> or the current one, sending the result to a new tab named <tab> or a new tab with an automatically picked name"),
+		))
+
+		display("Tabs", (
+			("tabs", "display a list of active tabs and the profile used to open each one"),
+			("tab", "switch to a tab by numerical key or by looking for a tab with a name or title starting with <selection>. Please note that you can only switch to tabs owned by your current profile"),
+		))
+
+		display("Profile", (
+			("profiles", "print a list of existing profiles"),
+			("profile <name>", "switch to a profile, or create a new profile with that name if it doesn't exist"),
+			("fork profile <name>", "create a new profile named <name> by copying the current profile"),
+			("delete profile", "delete the current profile from disk and memory"),
+		))
+
+		display("Proxy", (
+			("proxy <scheme> <value>", "setup a proxy for <scheme>"),
+			("proxy clear <scheme>", "clear proxy for a scheme"),
+		))
 
 	def process_command(self, command: str):
 		logger.info(f"processing command '{command}'")
@@ -439,6 +511,18 @@ class Context:
 		if match(DELETE_PROFILE_COMMAND, command) is not None:
 			self.delete_profile()
 			return
+		
+		if (hit := match(CLEAR_PROXY_COMMAND, command)) is not None:
+			args = hit.groupdict()
+			logger.info(f"CLEAR PROXY: {dict(args)}")
+			self.clear_proxy(scheme=args["scheme"])
+			return
+
+		if (hit := match(PROXY_COMMAND, command)) is not None:
+			args = hit.groupdict()
+			logger.info(f"PROXY: {dict(args)}")
+			self.proxy(scheme=args["scheme"], value=args["value"])
+			return
 
 		self.error(f"not a known command")
 
@@ -450,7 +534,13 @@ class Context:
 			while True:
 				command = self._console.input(self.prompt)
 				if not command: continue
-				self.process_command(command)
+
+				try:
+					self.process_command(command)
+
+				except Exception as error:
+					self.error(f"error while processing command: {error}")
+					logger.exception("error while processing command")
 
 		except KeyboardInterrupt:
 			if self._profile is not None:
