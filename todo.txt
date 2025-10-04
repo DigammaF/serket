@@ -1,3 +1,5 @@
 
- - create and customize profiles
- - rendering
+ - image download
+ - proxy/vpn
+ - better rendering
+ - js
