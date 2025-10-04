@@ -10,7 +10,7 @@ def render(document: BeautifulSoup) -> RenderableType:
 	for paragraph in document.find_all("p"):
 		text = paragraph.get_text()
 
-		if len(text) > 100:
+		if len(text) > 50:
 			renderables.append(Panel.fit(text))
 
 	return Group(*renderables)
