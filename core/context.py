@@ -251,7 +251,7 @@ class Context:
 		profile.session.headers["User-Agent"] = user_agent.value
 
 		try:
-			result = profile.session.get(url, stream=True)
+			result = profile.session.get(url, stream=True, proxies=dict(profile.iter_proxies()))
 
 		except requests.exceptions.SSLError:
 			self.error("unable to verify the server's SSL certificate")
@@ -264,6 +264,7 @@ class Context:
 
 		logger.info("request headers " + json.dumps(dict(profile.session.headers), indent=4))
 		logger.info("response headers " + json.dumps(dict(result.headers), indent=4))
+		logger.info("proxies " + json.dumps(dict(profile.iter_proxies()), indent=4))
 		
 		content_type = result.headers.get("content-type", "no content type sent")
 		content_length = int(result.headers.get("content-length", 0))
