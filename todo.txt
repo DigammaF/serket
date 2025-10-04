@@ -1,5 +1,4 @@
 
- - image download
  - proxy/vpn
  - better rendering
  - js
