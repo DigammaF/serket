@@ -118,13 +118,18 @@ class Context:
 
 			filepath = DOWNLOADS/filename
 
-			with Progress() as progress:
-				task = progress.add_task("Downloading", total=content_length)
+			try:
+				with Progress() as progress:
+					task = progress.add_task("Downloading", total=content_length)
 
-				with open(filepath, "wb") as file:
-					for chunk in result.iter_content(chunk_size=CHUNK_SIZE):
-						file.write(chunk)
-						progress.update(task, advance=len(chunk))
+					with open(filepath, "wb") as file:
+						for chunk in result.iter_content(chunk_size=CHUNK_SIZE):
+							file.write(chunk)
+							progress.update(task, advance=len(chunk))
+
+			except KeyboardInterrupt:
+				context.error("Interrupted by user")
+				return
 
 			context.success(f"Downloaded to {filepath}")
 
