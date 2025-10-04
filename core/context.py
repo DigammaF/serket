@@ -42,6 +42,7 @@ DELETE_PROFILE_COMMAND = compile(r"^delete profile")
 
 SETTING_COMMAND = compile(r"^setting (?P<name>\S*) (?P<value>\S*)")
 RESET_SETTING_COMMAND = compile(r"^setting reset (?P<name>\S*)")
+RELOAD_COMMAND = compile(r"^reload")
 
 CLEAR_COOKIES_COMMAND = compile(r"^clear cookies")
 
@@ -386,6 +387,18 @@ class Context:
 		if isinstance(result, Ok): self.success(result.value)
 		if isinstance(result, Error): self.error(result.error)
 
+	def reload(self):
+		if self._profile is None:
+			self.error(f"No profile currently loaded")
+			return
+		
+		name = self._profile.name
+		self._profile.save_to_disk()
+		self._profile = None
+		del self._profiles[name]
+		self._profile = self.get_profile(name)
+		self.success("done")
+
 	def clear_cookies(self):
 		if self._profile is None:
 			self.error(f"No profile currently loaded")
@@ -441,9 +454,13 @@ class Context:
 
 		display("Misc", (
 			("help", "print this help"),
+			("clear cookies", "clear all cookies from the current profile"),
+		))
+
+		display("Settings", (
 			("setting <name> <value>", "change a setting for the current profile"),
 			("setting reset <name>", "resets a setting to a default value"),
-			("clear cookies", "clear all cookies from the current profile"),
+			("reload", "rebuild the current profile, updating existing connections to latest settings"),
 		))
 
 		display("Browsing", (
@@ -540,6 +557,10 @@ class Context:
 			args = hit.groupdict()
 			logger.info(f"PROXY: {dict(args)}")
 			self.proxy(scheme=args["scheme"], value=args["value"])
+			return
+		
+		if match(RELOAD_COMMAND, command) is not None:
+			self.reload()
 			return
 
 		self.error(f"not a known command")

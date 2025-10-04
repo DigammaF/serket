@@ -7,10 +7,13 @@ import logging
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 
 from requests.sessions import RequestsCookieJar, Session
 from bs4 import BeautifulSoup
+from requests.adapters import HTTPAdapter
+from urllib3 import Retry
+from urllib3.poolmanager import PoolManager
 
 from .result import Result, Ok, Error
 
@@ -33,8 +36,23 @@ PROXIES = require(BASE/"proxies")
 logger.info(f"\n{BASE=}\n{COOKIES=}\n{DOWNLOADS=}\n{PROFILES=}\n{PROXIES=}")
 
 DEFAULT_SETTINGS: dict[str, str] = {
-	"user-agent": "Mozilla/5.0 (X11; Ubuntu; NoPointer) Gecko/20100101 Serket/0.1"
+	"user-agent": "Mozilla/5.0 (X11; Ubuntu; NoPointer) Gecko/20100101 Serket/0.1",
+	"ip-address": "0.0.0.0",
+	"port": "0",
 }
+
+class SerketAdapter(HTTPAdapter):
+	def __init__(self, source_address: tuple[str, int], pool_connections: int = 10, pool_maxsize: int = 10, max_retries: Retry | int | None = 0, pool_block: bool = False) -> None:
+		self.source_address = source_address
+		super().__init__(pool_connections, pool_maxsize, max_retries, pool_block)
+
+	def init_poolmanager(self, connections, maxsize, block=False, **pool_kwargs):
+		pool_kwargs["source_address"] = self.source_address
+		return super().init_poolmanager(connections, maxsize, block, **pool_kwargs)
+
+	def proxy_manager_for(self, proxy, **proxy_kwargs):
+		proxy_kwargs["source_address"] = self.source_address
+		return super().proxy_manager_for(proxy, **proxy_kwargs)
 
 @dataclass
 class Profile:
@@ -50,6 +68,13 @@ class Profile:
 		for key, default in DEFAULT_SETTINGS.items():
 			if key not in self._settings:
 				self._settings[key] = default
+
+		ip_address = self.get_setting("ip-address")\
+			.unwrap_or(lambda : DEFAULT_SETTINGS["ip-address"])
+		port = self.get_setting("port", int)\
+			.unwrap_or(lambda : int(DEFAULT_SETTINGS["port"]))
+		self._session.mount("http://", SerketAdapter((ip_address, port)))
+		self._session.mount("https://", SerketAdapter((ip_address, port)))
 
 	@property
 	def name(self) -> str:
@@ -85,8 +110,23 @@ class Profile:
 		logger.info(f"checking if profile '{self._name}' exists by checking existence of {self.profile_file}: {result}")
 		return result
 	
-	def get_setting(self, name: str) -> Result[str, str]:
-		if name in self._settings: return Ok(self._settings[name])
+	def get_setting[T](self, name: str, cast: Callable[[str,], T] = str) -> Result[T, str]:
+		logger.info(f"fetching setting '{name}' with cast {cast}")
+
+		if name in self._settings:
+			logger.info("raw setting exists")
+			raw = self._settings[name]
+
+			try:
+				return Ok(cast(raw))
+			
+			except ValueError as error:
+				logger.exception("cast error")
+				return Error("unable to cast setting value to the correct type " + str(error))
+
+			return Ok(self._settings[name])
+		
+		logger.info("setting doesn't exist")
 		return Error(f"no such setting '{name}'")
 	
 	def set_setting(self, name: str, value: str) -> Result[str, str]:
