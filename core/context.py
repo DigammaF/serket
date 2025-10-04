@@ -375,6 +375,16 @@ class Context:
 		if isinstance(result, Ok): self.success(result.value)
 		if isinstance(result, Error): self.error(result.error)
 
+	def reset_setting(self, name: str):
+		if self._profile is None:
+			self.error(f"No profile currently loaded")
+			return
+		
+		result = self._profile.reset_setting(name)
+		
+		if isinstance(result, Ok): self.success(result.value)
+		if isinstance(result, Error): self.error(result.error)
+
 	def clear_cookies(self):
 		if self._profile is None:
 			self.error(f"No profile currently loaded")
@@ -431,6 +441,7 @@ class Context:
 		display("Misc", (
 			("help", "print this help"),
 			("setting <name> <value>", "change a setting for the current profile"),
+			("setting reset <name>", "resets a setting to a default value"),
 			("clear cookies", "clear all cookies from the current profile"),
 		))
 
@@ -490,6 +501,12 @@ class Context:
 			args = hit.groupdict()
 			logger.info(f"PROFILE: {dict(args)}")
 			self.change_profile(name=args["name"])
+			return
+		
+		if (hit := match(RESET_SETTING_COMMAND, command)) is not None:
+			args = hit.groupdict()
+			logger.info(f"RESET SETTING: {dict(args)}")
+			self.reset_setting(name=args["name"])
 			return
 		
 		if (hit := match(SETTING_COMMAND, command)) is not None:

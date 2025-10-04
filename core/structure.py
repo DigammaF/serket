@@ -102,10 +102,10 @@ class Profile:
 	def reset_setting(self, name: str) -> Result[str, str]:
 		if name in DEFAULT_SETTINGS:
 			self._settings[name] = DEFAULT_SETTINGS[name]
-			return Ok(f"reset setting to {DEFAULT_SETTINGS[name]}")
+			return Ok(f"reset setting '{name}' to '{DEFAULT_SETTINGS[name]}'")
 		
 		return Error(f"no default available for '{name}'")
-	
+
 	def get_proxy(self, scheme: str) -> Result[str, str]:
 		if scheme in self._proxies: return Ok(self._proxies[scheme])
 		return Error(f"no proxy defined for '{scheme}'")
