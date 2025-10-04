@@ -380,6 +380,7 @@ class Context:
 	def mainloop(self):
 		try:
 			self._profile = self.get_profile("default")
+			self._console.print(f"Welcome to [red]Serket[/red]! Use [red]help[/red] if needed.")
 
 			while True:
 				command = self._console.input(self.prompt)
